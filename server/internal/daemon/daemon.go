@@ -5710,7 +5710,14 @@ func providerDisplayName(name string) string {
 // 2.13.0 ACP smoke — see the call site. Still unprobed: grok, qoder, codebuddy.
 func providerNeedsInlineSystemPrompt(provider string) bool {
 	switch provider {
-	case "openclaw", "kimi", "traecli", "qwenpaw":
+	case "openclaw", "kimi", "traecli", "qwenpaw",
+		// Bob CLI does not read the per-task AGENTS.md written into the
+		// workdir. Its context file is ~/.bob/AGENTS.md (global user memory)
+		// and .bob/agents/*.md — neither of which the daemon manages. The full
+		// runtime brief must therefore ride in the turn prompt itself, as
+		// opts.SystemPrompt, which the bob backend passes as the positional
+		// <prompt> argument to `bob run`. Confirmed against Bob CLI v2.0.1.
+		"bob":
 		return true
 	default:
 		return false
