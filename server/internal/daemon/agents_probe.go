@@ -269,6 +269,15 @@ var probeAgentCLIs = func() map[string]AgentEntry {
 	if e, ok := probe("MULTICA_MCODE_PATH", "mcode", ""); ok {
 		agents["mcode"] = e
 	}
+	// Bob CLI (`bob`) is IBM's Bob coding agent, invoked as
+	// `bob run --format stream-json`. It does not read AGENTS.md from the
+	// workdir; the daemon delivers the task brief inline as the prompt
+	// argument (providerNeedsInlineSystemPrompt returns true for "bob").
+	// MULTICA_BOB_MODEL is accepted for symmetry but currently unused since
+	// Bob's model is configured via BOBSHELL_API_KEY and the gateway.
+	if e, ok := probe("MULTICA_BOB_PATH", "bob", "MULTICA_BOB_MODEL"); ok {
+		agents["bob"] = e
+	}
 	// ZeroClaw (`zeroclaw`) is a Rust-based generic agent CLI, driven over
 	// ACP via `zeroclaw acp`. It takes no model env var: its ACP server has no
 	// `session/set_model` and no handler reads a model param, so the model

@@ -5714,7 +5714,14 @@ func providerDisplayName(name string) string {
 // 2.13.0 ACP smoke — see the call site. Still unprobed: grok, qoder, codebuddy.
 func providerNeedsInlineSystemPrompt(provider string) bool {
 	switch provider {
-	case "openclaw", "kimi", "traecli", "qwenpaw":
+	case "openclaw", "kimi", "traecli", "qwenpaw",
+		// Bob CLI does not read the per-task AGENTS.md written into the
+		// workdir. Its context file is ~/.bob/AGENTS.md (global user memory)
+		// and .bob/agents/*.md — neither of which the daemon manages. The full
+		// runtime brief must therefore ride in the turn prompt itself, as
+		// opts.SystemPrompt, which the bob backend passes as the positional
+		// <prompt> argument to `bob run`. Confirmed against Bob CLI v2.0.1.
+		"bob":
 		return true
 	default:
 		return false
@@ -7754,7 +7761,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// Convert agent usage map to task usage entries.
 	var usageEntries []TaskUsageEntry
 	for model, u := range result.Usage {
-		if u.InputTokens == 0 && u.OutputTokens == 0 && u.CacheReadTokens == 0 && u.CacheWriteTokens == 0 {
+		if u.InputTokens == 0 && u.OutputTokens == 0 && u.CacheReadTokens == 0 && u.CacheWriteTokens == 0 && u.CostUSDTicks == 0 {
 			continue
 		}
 		usageEntries = append(usageEntries, TaskUsageEntry{
