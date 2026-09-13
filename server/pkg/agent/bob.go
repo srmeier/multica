@@ -27,11 +27,14 @@ const bobDefaultTerminateGrace = 5 * time.Second
 //	{"type":"tool_result","tool_id":"…", "status":"success"|"error", "output":"…"}
 //	{"type":"result",     "status":"success"|"error", "stats":{"task_id":"…", …}}
 //
-// Because Bob does not read the per-task AGENTS.md the daemon writes into
-// the workdir, the daemon delivers the full runtime brief inline as the
-// prompt argument (providerNeedsInlineSystemPrompt returns true for "bob").
-// The brief arrives in opts.SystemPrompt and is passed directly as the
-// positional <prompt> argument to `bob run`.
+// Bob loads the per-task AGENTS.md the daemon writes into the workdir, so the
+// runtime brief is not inlined (providerNeedsInlineSystemPrompt is false for
+// "bob") and opts.SystemPrompt is normally empty.
+//
+// When `--max-cost` (passed through custom_args) stops a task, Bob emits an
+// "error" event, then a "result" with status success, and exits 0. The backend
+// reports that run as failed with an error starting with BobCostLimitError, so
+// the daemon can tag it BobCostLimitReason instead of a finished turn.
 type bobBackend struct {
 	cfg Config
 }
@@ -50,10 +53,9 @@ func (b *bobBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 
 	args := buildBobArgs(opts)
 
-	// Bob receives the full task brief inline as the positional prompt
-	// argument.  opts.SystemPrompt carries the runtime brief because
-	// providerNeedsInlineSystemPrompt("bob") returns true — Bob ignores the
-	// per-task AGENTS.md the daemon writes into the workdir.
+	// The prompt is the positional argument. A SystemPrompt, if a caller still
+	// sets one, is prepended; the daemon's runtime brief reaches Bob through the
+	// workdir AGENTS.md instead.
 	briefAndPrompt := opts.SystemPrompt
 	if prompt != "" {
 		if briefAndPrompt != "" {
@@ -112,6 +114,7 @@ func (b *bobBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 		var finalResultText string
 		var sessionID string
 		var sessionCostsUSD float64
+		var costLimitText string
 		sawResult := false
 		resultIsError := false
 		eventCount := 0
@@ -180,6 +183,10 @@ func (b *bobBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 					CallID: event.ToolID,
 					Output: event.Output,
 				})
+			case "error":
+				if text := bobCostLimitText(event); text != "" {
+					costLimitText = text
+				}
 			case "result":
 				sawResult = true
 				resultIsError = event.Status == "error"
@@ -219,23 +226,24 @@ func (b *bobBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 			},
 			"",
 		)
+		finalStatus, finalError = bobCostLimitResult(finalStatus, finalError, costLimitText)
 
 		if finalError != "" {
 			finalError = withAgentStderr(finalError, "bob", stderrTail)
 		}
 
 		logStreamProtocolObservation(b.cfg.Logger, streamProtocolObservation{
-			provider:          "bob",
-			cliVersion:        b.cfg.CLIVersion,
-			exitCode:          streamProcessExitCode(exitErr),
-			eventCount:        eventCount,
-			invalidEventCount: invalidEventCount,
-			toolUseCount:      toolUseCount,
-			sawResult:         sawResult,
-			resultIsError:     resultIsError,
-			resultBytes:       0,
+			provider:           "bob",
+			cliVersion:         b.cfg.CLIVersion,
+			exitCode:           streamProcessExitCode(exitErr),
+			eventCount:         eventCount,
+			invalidEventCount:  invalidEventCount,
+			toolUseCount:       toolUseCount,
+			sawResult:          sawResult,
+			resultIsError:      resultIsError,
+			resultBytes:        0,
 			lastAssistantBytes: lastAssistantText.Len(),
-			scannerError:      scanErr != nil,
+			scannerError:       scanErr != nil,
 		})
 
 		b.cfg.Logger.Info("bob finished", "pid", cmd.Process.Pid, "status", finalStatus, "duration", duration.Round(time.Millisecond).String())
@@ -302,22 +310,55 @@ var bobBlockedArgs = map[string]blockedArgMode{
 //	{"type":"tool_result","timestamp":"…", "tool_id":"…", "status":"success"|"error", "output":"…"}
 //	{"type":"result",     "timestamp":"…", "status":"success"|"error", "stats":{…}}
 type bobStreamEvent struct {
-	Type      string          `json:"type"`
-	Role      string          `json:"role,omitempty"`
-	Content   string          `json:"content,omitempty"`
-	ToolName  string          `json:"tool_name,omitempty"`
-	ToolID    string          `json:"tool_id,omitempty"`
+	Type       string          `json:"type"`
+	Role       string          `json:"role,omitempty"`
+	Content    string          `json:"content,omitempty"`
+	ToolName   string          `json:"tool_name,omitempty"`
+	ToolID     string          `json:"tool_id,omitempty"`
 	Parameters json.RawMessage `json:"parameters,omitempty"`
-	Output    string          `json:"output,omitempty"`
-	Status    string          `json:"status,omitempty"`
-	Stats     *bobResultStats `json:"stats,omitempty"`
+	Output     string          `json:"output,omitempty"`
+	Status     string          `json:"status,omitempty"`
+	Stats      *bobResultStats `json:"stats,omitempty"`
+	// "error" events carry their text in one of these (content is also used).
+	Message string `json:"message,omitempty"`
+	Error   string `json:"error,omitempty"`
+}
+
+const (
+	// BobCostLimitError starts the error of a run Bob stopped at --max-cost.
+	BobCostLimitError = "bob stopped at its cost limit"
+	// BobCostLimitReason is the task failure_reason for such a run.
+	BobCostLimitReason = "bob_cost_limit"
+)
+
+// bobCostLimitText returns the text of an "error" event that reports the
+// --max-cost cap ("Maximum cost limit reached …"), or "".
+func bobCostLimitText(event bobStreamEvent) string {
+	if event.Type != "error" {
+		return ""
+	}
+	for _, text := range []string{event.Content, event.Message, event.Error} {
+		if strings.Contains(strings.ToLower(text), "maximum cost limit") {
+			return text
+		}
+	}
+	return ""
+}
+
+// bobCostLimitResult turns a run that otherwise completed into a failure when
+// Bob reported its cost cap; other terminal states keep their own status.
+func bobCostLimitResult(status, errMsg, costLimitText string) (string, string) {
+	if costLimitText == "" || status != "completed" {
+		return status, errMsg
+	}
+	return "failed", BobCostLimitError + ": " + costLimitText
 }
 
 // bobResultStats holds the payload of a Bob "result" event's stats field.
 // task_id is Bob's session handle; pass it back as --resume on subsequent runs.
 type bobResultStats struct {
-	TaskID      string  `json:"task_id"`
-	DurationMs  float64 `json:"duration_ms"`
+	TaskID       string  `json:"task_id"`
+	DurationMs   float64 `json:"duration_ms"`
 	SessionCosts float64 `json:"session_costs"`
-	ToolCalls   int     `json:"tool_calls"`
+	ToolCalls    int     `json:"tool_calls"`
 }

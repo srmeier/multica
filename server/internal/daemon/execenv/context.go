@@ -344,6 +344,10 @@ func skillsDirPath(workDir, provider string) string {
 		return filepath.Join(workDir, desc.SkillsDir)
 	}
 	switch provider {
+	case "bob":
+		// Bob CLI discovers project skills from .bob/skills/<name>/SKILL.md under
+		// --workspace; it doesn't scan .agent_context/skills/ (Farmhouse V3).
+		return filepath.Join(workDir, ".bob", "skills")
 	case "claude":
 		// Claude Code natively discovers skills from .claude/skills/ in the workdir.
 		return filepath.Join(workDir, ".claude", "skills")

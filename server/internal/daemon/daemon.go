@@ -5708,16 +5708,12 @@ func providerDisplayName(name string) string {
 // hermes 0.18.2 over ACP (AGENTS.md). MCode 0.1.2 also loads AGENTS.md by its
 // native runtime contract. kiro was confirmed earlier by a kiro-cli
 // 2.13.0 ACP smoke — see the call site. Still unprobed: grok, qoder, codebuddy.
+// Bob CLI 2.0.0 loads the workdir AGENTS.md too (Farmhouse V3: a codeword in
+// the agent's instructions was quoted back through a real task), so inlining
+// the brief for bob only duplicated it.
 func providerNeedsInlineSystemPrompt(provider string) bool {
 	switch provider {
-	case "openclaw", "kimi", "traecli", "qwenpaw",
-		// Bob CLI does not read the per-task AGENTS.md written into the
-		// workdir. Its context file is ~/.bob/AGENTS.md (global user memory)
-		// and .bob/agents/*.md — neither of which the daemon manages. The full
-		// runtime brief must therefore ride in the turn prompt itself, as
-		// opts.SystemPrompt, which the bob backend passes as the positional
-		// <prompt> argument to `bob run`. Confirmed against Bob CLI v2.0.1.
-		"bob":
+	case "openclaw", "kimi", "traecli", "qwenpaw":
 		return true
 	default:
 		return false
@@ -7916,6 +7912,19 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		// conversation permanently blocks the issue: every follow-up
 		// task resumes the same poisoned session and hits the same 400.
 		failureReason, _ := classifyPoisonedError(errMsg)
+		if provider == "bob" && strings.HasPrefix(errMsg, agent.BobCostLimitError) {
+			// Farmhouse: Bob stopped at its --max-cost cap. Not resume-unsafe:
+			// the platform raises the cap and resumes the same session.
+			return TaskResult{
+				Status:        "blocked",
+				Comment:       errMsg,
+				SessionID:     result.SessionID,
+				WorkDir:       env.WorkDir,
+				EnvRoot:       env.RootDir,
+				Usage:         usageEntries,
+				FailureReason: agent.BobCostLimitReason,
+			}, nil
+		}
 		if failureReason == "" {
 			// A resume we could not read back leaves the same oversized thread
 			// recorded as this issue's resume pointer. Reaching here means the
