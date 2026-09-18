@@ -421,7 +421,17 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "workspace not found")
 			return
 		}
-		// ownerID stays zero — COALESCE keeps the existing owner on upsert.
+		// Farmhouse: a token minted through the API makes its minter the runtimes' owner, while they
+		// are still a member, so the claim handler can mint task tokens. Other tokens leave ownerID
+		// zero, and COALESCE keeps the existing owner on upsert.
+		if creator := middleware.DaemonTokenCreatorFromContext(r.Context()); creator != "" {
+			member, err := h.getWorkspaceMember(r.Context(), creator, req.WorkspaceID)
+			if err != nil {
+				writeError(w, http.StatusForbidden, "the daemon token's creator is not a member of this workspace")
+				return
+			}
+			ownerID = member.UserID
+		}
 	} else {
 		member, ok := h.requireWorkspaceMember(w, r, req.WorkspaceID, "workspace not found")
 		if !ok {

@@ -23,3 +23,22 @@ RETURNING token_hash;
 -- name: DeleteExpiredDaemonTokens :exec
 DELETE FROM daemon_token
 WHERE expires_at <= now();
+
+-- name: CreateDaemonTokenByUser :one
+-- Farmhouse: a daemon token minted by a workspace admin, who owns the runtimes it registers.
+INSERT INTO daemon_token (token_hash, workspace_id, daemon_id, expires_at, created_by)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING *;
+
+-- name: ListDaemonTokensByWorkspace :many
+-- Farmhouse: the API-minted daemon tokens of a workspace, without their hashes.
+SELECT id, workspace_id, daemon_id, expires_at, created_at, created_by FROM daemon_token
+WHERE workspace_id = $1 AND created_by IS NOT NULL
+ORDER BY created_at;
+
+-- name: DeleteDaemonTokenByID :one
+-- Farmhouse: revoke one daemon token. Returns token_hash so the caller can invalidate
+-- auth.DaemonTokenCache at once.
+DELETE FROM daemon_token
+WHERE id = $1 AND workspace_id = $2
+RETURNING token_hash;

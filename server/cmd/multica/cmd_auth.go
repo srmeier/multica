@@ -27,7 +27,11 @@ import (
 // with a Multica Cloud Node PAT (`mcn_`) even though the server happily
 // authenticates both kinds. Keep this list in sync with the prefix branches
 // in server/internal/middleware/auth.go.
-var loginTokenPrefixes = []string{"mul_", auth.CloudPATPrefix}
+var loginTokenPrefixes = []string{"mul_", auth.CloudPATPrefix, daemonTokenPrefix}
+
+// daemonTokenPrefix (Farmhouse): a workspace-bound daemon token, minted by a workspace admin for a
+// runtime pod's daemon. It works only on /api/daemon/*, so login checks it there instead of /api/me.
+const daemonTokenPrefix = "mdt_"
 
 // validateLoginTokenPrefix returns nil if token starts with one of the
 // CLI-recognised PAT prefixes, or an error describing the accepted set.
@@ -443,7 +447,19 @@ func runAuthLoginToken(cmd *cobra.Command, providedToken string) error {
 		Name  string `json:"name"`
 		Email string `json:"email"`
 	}
-	if err := client.GetJSON(ctx, "/api/me", &me); err != nil {
+	if strings.HasPrefix(token, daemonTokenPrefix) {
+		var workspaces []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		}
+		if err := client.GetJSON(ctx, "/api/daemon/workspaces", &workspaces); err != nil {
+			return cli.WithUserMessage("Could not sign in with that daemon token — make sure it is valid and not expired.", err)
+		}
+		if len(workspaces) != 1 {
+			return fmt.Errorf("a daemon token should be bound to one workspace; the server listed %d", len(workspaces))
+		}
+		me.Name, me.Email = "daemon token", "workspace "+workspaces[0].Name
+	} else if err := client.GetJSON(ctx, "/api/me", &me); err != nil {
 		return cli.WithUserMessage("Could not sign in with that token — make sure it is valid and not expired, then run `multica login --token <token>` again.", err)
 	}
 
@@ -488,7 +504,19 @@ func runAuthStatus(cmd *cobra.Command, _ []string) error {
 		Name  string `json:"name"`
 		Email string `json:"email"`
 	}
-	if err := client.GetJSON(ctx, "/api/me", &me); err != nil {
+	if strings.HasPrefix(token, daemonTokenPrefix) {
+		var workspaces []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		}
+		if err := client.GetJSON(ctx, "/api/daemon/workspaces", &workspaces); err != nil {
+			return cli.WithUserMessage("Could not sign in with that daemon token — make sure it is valid and not expired.", err)
+		}
+		if len(workspaces) != 1 {
+			return fmt.Errorf("a daemon token should be bound to one workspace; the server listed %d", len(workspaces))
+		}
+		me.Name, me.Email = "daemon token", "workspace "+workspaces[0].Name
+	} else if err := client.GetJSON(ctx, "/api/me", &me); err != nil {
 		fmt.Fprintf(os.Stderr, "Token is invalid or expired: %v\nRun 'multica login' to re-authenticate.\n", err)
 		return nil
 	}

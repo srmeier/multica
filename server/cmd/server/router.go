@@ -1566,6 +1566,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/mcp-servers", h.CreateWorkspaceMcpServer)
 					r.Put("/mcp-servers/{serverId}", h.UpdateWorkspaceMcpServer)
 					r.Delete("/mcp-servers/{serverId}", h.DeleteWorkspaceMcpServer)
+					// Farmhouse: daemon tokens for runtime pods, minted and revoked by a
+					// human owner or admin (see handler/daemon_token_farmhouse.go).
+					r.Get("/daemon-tokens", h.ListDaemonTokens)
+					r.With(handler.RequireHumanActor).Post("/daemon-tokens", h.CreateDaemonToken)
+					r.With(handler.RequireHumanActor).Delete("/daemon-tokens/{tokenId}", h.RevokeDaemonToken)
 					r.Post("/share-links", h.CreateShareLink)
 					r.Delete("/share-links/{linkId}", h.RevokeShareLink)
 					r.Get("/share-links", h.ListShareLinks)

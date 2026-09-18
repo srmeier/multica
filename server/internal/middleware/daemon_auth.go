@@ -20,6 +20,7 @@ const (
 	ctxKeyDaemonWorkspaceID daemonContextKey = iota
 	ctxKeyDaemonID
 	ctxKeyDaemonAuthPath
+	ctxKeyDaemonTokenCreator
 )
 
 // Daemon auth path labels exposed via context for slow-log attribution.
@@ -45,6 +46,13 @@ func DaemonIDFromContext(ctx context.Context) string {
 // DaemonAuthPathFromContext returns which token kind authenticated this
 // request — "daemon_token", "pat", "cloud_pat", or "jwt" — for telemetry.
 // Empty when the request did not pass through DaemonAuth.
+// DaemonTokenCreatorFromContext returns the user who minted the request's daemon token through the
+// API (Farmhouse), or "" for other credentials and for tokens minted for remote MCP.
+func DaemonTokenCreatorFromContext(ctx context.Context) string {
+	id, _ := ctx.Value(ctxKeyDaemonTokenCreator).(string)
+	return id
+}
+
 func DaemonAuthPathFromContext(ctx context.Context) string {
 	p, _ := ctx.Value(ctxKeyDaemonAuthPath).(string)
 	return p
@@ -111,6 +119,7 @@ func DaemonAuth(queries *db.Queries, patCache *auth.PATCache, daemonCache *auth.
 					ctx := context.WithValue(r.Context(), ctxKeyDaemonWorkspaceID, id.WorkspaceID)
 					ctx = context.WithValue(ctx, ctxKeyDaemonID, id.DaemonID)
 					ctx = context.WithValue(ctx, ctxKeyDaemonAuthPath, DaemonAuthPathDaemonToken)
+					ctx = context.WithValue(ctx, ctxKeyDaemonTokenCreator, id.CreatedBy)
 					next.ServeHTTP(w, r.WithContext(ctx))
 					return
 				}
@@ -130,6 +139,9 @@ func DaemonAuth(queries *db.Queries, patCache *auth.PATCache, daemonCache *auth.
 					WorkspaceID: uuidToString(dt.WorkspaceID),
 					DaemonID:    dt.DaemonID,
 				}
+				if dt.CreatedBy.Valid {
+					identity.CreatedBy = uuidToString(dt.CreatedBy)
+				}
 				// daemon_token.expires_at is NOT NULL; pgtype Valid is true
 				// in normal operation, but defend against zero just in case.
 				var expiresAt time.Time
@@ -141,6 +153,7 @@ func DaemonAuth(queries *db.Queries, patCache *auth.PATCache, daemonCache *auth.
 				ctx := context.WithValue(r.Context(), ctxKeyDaemonWorkspaceID, identity.WorkspaceID)
 				ctx = context.WithValue(ctx, ctxKeyDaemonID, identity.DaemonID)
 				ctx = context.WithValue(ctx, ctxKeyDaemonAuthPath, DaemonAuthPathDaemonToken)
+				ctx = context.WithValue(ctx, ctxKeyDaemonTokenCreator, identity.CreatedBy)
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return
 			}
