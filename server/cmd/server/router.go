@@ -1468,7 +1468,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// no workspace in the path to gate on.
 		// --- User-scoped routes (no workspace context required) ---
 		r.Get("/api/me", h.GetMe)
-		r.Patch("/api/me", h.UpdateMe)
+		// Farmhouse: account-level writes are the account holder's, not an agent's.
+		// A mat_ task token acts as its runtime's owner, so without these guards a
+		// running agent could change the account, mint PATs that outlive its task,
+		// create workspaces, accept invitations, or bind the account to an outside
+		// chat or integration identity. See handler/actor_guards.go.
+		r.With(handler.RequireHumanActor).Patch("/api/me", h.UpdateMe)
 		r.Patch("/api/me/onboarding", h.PatchOnboarding)
 		r.Post("/api/me/onboarding/complete", h.CompleteOnboarding)
 		r.Post("/api/me/onboarding/cloud-waitlist", h.JoinCloudWaitlist)
@@ -1507,7 +1512,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 		r.Route("/api/workspaces", func(r chi.Router) {
 			r.Get("/", h.ListWorkspaces)
-			r.Post("/", h.CreateWorkspace)
+			r.With(handler.RequireHumanActor).Post("/", h.CreateWorkspace)
 			r.Route("/{id}", func(r chi.Router) {
 				// Member-level access
 				r.Group(func(r chi.Router) {
@@ -1689,24 +1694,24 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// lark_user_binding row. Identity comes from the session;
 		// the token only proves "this open_id requested binding," and
 		// is combined with the logged-in user to create the mapping.
-		r.Post("/api/lark/binding/redeem", h.RedeemLarkBindingToken)
+		r.With(handler.RequireHumanActor).Post("/api/lark/binding/redeem", h.RedeemLarkBindingToken)
 		// Slack binding-token redemption. Same rationale as Lark: NOT
 		// workspace-scoped because the redeemer hits this before they have any
 		// workspace context — the redemption itself mints their binding row. The
 		// logged-in user (from the session) is bound to the Slack id the token
 		// carries.
-		r.Post("/api/slack/binding/redeem", h.RedeemSlackBindingToken)
+		r.With(handler.RequireHumanActor).Post("/api/slack/binding/redeem", h.RedeemSlackBindingToken)
 		// DingTalk binding redemption is user-scoped for the same reason as
 		// Slack: the token is redeemed before workspace context is selected.
-		r.Post("/api/dingtalk/binding/redeem", h.RedeemDingTalkBindingToken)
+		r.With(handler.RequireHumanActor).Post("/api/dingtalk/binding/redeem", h.RedeemDingTalkBindingToken)
 		// WeCom smart-bot binding-token redemption. Same rationale as
 		// Lark/Slack: the session is the source of truth for the redeemer's
 		// Multica identity; the token only carries the WeCom userid to bind.
-		r.Post("/api/wecom/binding/redeem", h.RedeemWecomBindingToken)
+		r.With(handler.RequireHumanActor).Post("/api/wecom/binding/redeem", h.RedeemWecomBindingToken)
 		// Telegram binding-token redemption. Same rationale: not
 		// workspace-scoped, identity from the session, token proves only
 		// "this Telegram user id requested binding".
-		r.Post("/api/telegram/binding/redeem", h.RedeemTelegramBindingToken)
+		r.With(handler.RequireHumanActor).Post("/api/telegram/binding/redeem", h.RedeemTelegramBindingToken)
 
 		// Composio integration (MUL-3720). User-scoped (no workspace context):
 		// a connection belongs to a user. These four require a logged-in
@@ -1714,6 +1719,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// group (registered above with the other public OAuth/webhook routes —
 		// see MUL-3843). All return 503 when COMPOSIO_API_KEY is unset.
 		r.Route("/api/integrations/composio", func(r chi.Router) {
+			r.Use(handler.RequireHumanActor) // Farmhouse: connections are the account holder's
 			r.Post("/connect/init", h.ComposioConnectInit)
 			r.Get("/toolkits", h.ListComposioToolkits)
 			r.Get("/connections", h.ListComposioConnections)
@@ -1723,11 +1729,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// User-scoped invitation routes (no workspace context required)
 		r.Get("/api/invitations", h.ListMyInvitations)
 		r.Get("/api/invitations/{id}", h.GetMyInvitation)
-		r.Post("/api/invitations/{id}/accept", h.AcceptInvitation)
-		r.Post("/api/invitations/{id}/decline", h.DeclineInvitation)
-		r.Post("/api/share-links/join", h.JoinByShareLink)
+		r.With(handler.RequireHumanActor).Post("/api/invitations/{id}/accept", h.AcceptInvitation)
+		r.With(handler.RequireHumanActor).Post("/api/invitations/{id}/decline", h.DeclineInvitation)
+		r.With(handler.RequireHumanActor).Post("/api/share-links/join", h.JoinByShareLink)
 
 		r.Route("/api/tokens", func(r chi.Router) {
+			r.Use(handler.RequireHumanActor) // Farmhouse: an agent can't list, mint, renew or revoke PATs
 			r.Get("/", h.ListPersonalAccessTokens)
 			r.Post("/", h.CreatePersonalAccessToken)
 			r.Post("/current/renew", h.RenewCurrentPersonalAccessToken)
