@@ -83,7 +83,7 @@ func (q *Queries) CreateDaemonTokenByUser(ctx context.Context, arg CreateDaemonT
 const deleteDaemonTokenByID = `-- name: DeleteDaemonTokenByID :one
 DELETE FROM daemon_token
 WHERE id = $1 AND workspace_id = $2
-RETURNING token_hash
+RETURNING token_hash, daemon_id
 `
 
 type DeleteDaemonTokenByIDParams struct {
@@ -91,13 +91,18 @@ type DeleteDaemonTokenByIDParams struct {
 	WorkspaceID pgtype.UUID `json:"workspace_id"`
 }
 
+type DeleteDaemonTokenByIDRow struct {
+	TokenHash string `json:"token_hash"`
+	DaemonID  string `json:"daemon_id"`
+}
+
 // Farmhouse: revoke one daemon token. Returns token_hash so the caller can invalidate
-// auth.DaemonTokenCache at once.
-func (q *Queries) DeleteDaemonTokenByID(ctx context.Context, arg DeleteDaemonTokenByIDParams) (string, error) {
+// auth.DaemonTokenCache at once, and daemon_id so it can close the daemon's connections.
+func (q *Queries) DeleteDaemonTokenByID(ctx context.Context, arg DeleteDaemonTokenByIDParams) (DeleteDaemonTokenByIDRow, error) {
 	row := q.db.QueryRow(ctx, deleteDaemonTokenByID, arg.ID, arg.WorkspaceID)
-	var token_hash string
-	err := row.Scan(&token_hash)
-	return token_hash, err
+	var i DeleteDaemonTokenByIDRow
+	err := row.Scan(&i.TokenHash, &i.DaemonID)
+	return i, err
 }
 
 const deleteDaemonTokensByWorkspaceAndDaemons = `-- name: DeleteDaemonTokensByWorkspaceAndDaemons :many

@@ -38,7 +38,7 @@ ORDER BY created_at;
 
 -- name: DeleteDaemonTokenByID :one
 -- Farmhouse: revoke one daemon token. Returns token_hash so the caller can invalidate
--- auth.DaemonTokenCache at once.
+-- auth.DaemonTokenCache at once, and daemon_id so it can close the daemon's connections.
 DELETE FROM daemon_token
 WHERE id = $1 AND workspace_id = $2
-RETURNING token_hash;
+RETURNING token_hash, daemon_id;

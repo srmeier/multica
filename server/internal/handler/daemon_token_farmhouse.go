@@ -119,8 +119,8 @@ func (h *Handler) ListDaemonTokens(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// RevokeDaemonToken deletes one daemon token and drops it from the token cache, so the next request
-// with it is refused.
+// RevokeDaemonToken deletes one daemon token, drops it from the token cache and closes its daemon's
+// sockets on this replica, so the next request or claim with it is refused.
 func (h *Handler) RevokeDaemonToken(w http.ResponseWriter, r *http.Request) {
 	workspaceID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "workspace id")
 	if !ok {
@@ -130,11 +130,16 @@ func (h *Handler) RevokeDaemonToken(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	hash, err := h.Queries.DeleteDaemonTokenByID(r.Context(), db.DeleteDaemonTokenByIDParams{ID: tokenID, WorkspaceID: workspaceID})
+	row, err := h.Queries.DeleteDaemonTokenByID(r.Context(), db.DeleteDaemonTokenByIDParams{ID: tokenID, WorkspaceID: workspaceID})
 	if err != nil {
 		writeError(w, http.StatusNotFound, "daemon token not found")
 		return
 	}
-	h.DaemonTokenCache.Invalidate(r.Context(), hash)
+	h.DaemonTokenCache.Invalidate(r.Context(), row.TokenHash)
+	// An open daemon socket keeps the identity it connected with, and claims over it aren't
+	// rechecked, so close it too. The daemon reconnects, and the token is refused.
+	if h.DaemonHub != nil {
+		h.DaemonHub.DisconnectDaemon(uuidToString(workspaceID), row.DaemonID)
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
