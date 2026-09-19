@@ -660,6 +660,10 @@ func (h *Handler) GoogleLogin(w http.ResponseWriter, r *http.Request) {
 // This allows cookie-authenticated browser sessions to obtain a bearer token
 // that can be handed off to the CLI via the cli_callback redirect.
 func (h *Handler) IssueCliToken(w http.ResponseWriter, r *http.Request) {
+	if isMachineCredentialActor(r) { // Farmhouse: backstop for the router's guard
+		writeError(w, http.StatusForbidden, "this endpoint is only available to human actors")
+		return
+	}
 	userID, ok := requireUserID(w, r)
 	if !ok {
 		return
