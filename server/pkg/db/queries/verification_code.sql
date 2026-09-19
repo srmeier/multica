@@ -28,6 +28,12 @@ WHERE email = $1
 ORDER BY created_at DESC
 LIMIT 1;
 
+-- Kept for a day, so failed attempts count toward the daily limit (Farmhouse).
 -- name: DeleteExpiredVerificationCodes :exec
 DELETE FROM verification_code
-WHERE expires_at < now() - interval '1 hour';
+WHERE expires_at < now() - interval '1 day';
+
+-- Failed attempts at an email's codes since a time: past a daily limit, it gets no new code (Farmhouse).
+-- name: CountVerificationAttemptsSince :one
+SELECT coalesce(sum(attempts), 0)::int AS attempts FROM verification_code
+WHERE email = $1 AND created_at > $2;

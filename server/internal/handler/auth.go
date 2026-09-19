@@ -111,6 +111,9 @@ type VerifyCodeRequest struct {
 	Code  string `json:"code"`
 }
 
+// MaxDailyVerificationFailures is how many wrong codes an email may have in 24 hours before it gets no new one.
+const MaxDailyVerificationFailures = 20
+
 func generateCode() (string, error) {
 	var buf [4]byte
 	if _, err := rand.Read(buf[:]); err != nil {
@@ -334,6 +337,22 @@ func (h *Handler) SendCode(w http.ResponseWriter, r *http.Request) {
 	latest, err := h.Queries.GetLatestCodeByEmail(r.Context(), email)
 	if err == nil && time.Since(latest.CreatedAt.Time) < 60*time.Second {
 		writeError(w, http.StatusTooManyRequests, "please wait before requesting another code")
+		return
+	}
+
+	// Farmhouse: an email whose codes had MaxDailyVerificationFailures wrong guesses in 24 hours gets no new code until
+	// the day has room. Each code takes 5 guesses and a code a minute is allowed, which alone lets anyone who reaches the
+	// backend guess an account's 6-digit code at 7,200 tries a day.
+	failures, err := h.Queries.CountVerificationAttemptsSince(r.Context(), db.CountVerificationAttemptsSinceParams{
+		Email: email, CreatedAt: pgtype.Timestamptz{Time: time.Now().Add(-24 * time.Hour), Valid: true},
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to check verification attempts")
+		return
+	}
+	if failures >= MaxDailyVerificationFailures {
+		slog.Warn("verification code refused: too many failed attempts", append(logger.RequestAttrs(r), "email", email)...)
+		writeError(w, http.StatusTooManyRequests, "too many failed sign-in attempts for this email; try again tomorrow")
 		return
 	}
 

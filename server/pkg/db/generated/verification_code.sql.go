@@ -11,6 +11,24 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countVerificationAttemptsSince = `-- name: CountVerificationAttemptsSince :one
+SELECT coalesce(sum(attempts), 0)::int AS attempts FROM verification_code
+WHERE email = $1 AND created_at > $2
+`
+
+type CountVerificationAttemptsSinceParams struct {
+	Email     string             `json:"email"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+// Failed attempts at an email's codes since a time: past a daily limit, it gets no new code (Farmhouse).
+func (q *Queries) CountVerificationAttemptsSince(ctx context.Context, arg CountVerificationAttemptsSinceParams) (int32, error) {
+	row := q.db.QueryRow(ctx, countVerificationAttemptsSince, arg.Email, arg.CreatedAt)
+	var attempts int32
+	err := row.Scan(&attempts)
+	return attempts, err
+}
+
 const createVerificationCode = `-- name: CreateVerificationCode :one
 INSERT INTO verification_code (email, code, expires_at)
 VALUES ($1, $2, $3)
@@ -40,9 +58,10 @@ func (q *Queries) CreateVerificationCode(ctx context.Context, arg CreateVerifica
 
 const deleteExpiredVerificationCodes = `-- name: DeleteExpiredVerificationCodes :exec
 DELETE FROM verification_code
-WHERE expires_at < now() - interval '1 hour'
+WHERE expires_at < now() - interval '1 day'
 `
 
+// Kept for a day, so failed attempts count toward the daily limit (Farmhouse).
 func (q *Queries) DeleteExpiredVerificationCodes(ctx context.Context) error {
 	_, err := q.db.Exec(ctx, deleteExpiredVerificationCodes)
 	return err

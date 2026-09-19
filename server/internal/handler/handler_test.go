@@ -2197,6 +2197,51 @@ func TestSendCodeRateLimit(t *testing.T) {
 	}
 }
 
+func TestSendCodeStopsAfterTooManyFailedAttempts(t *testing.T) {
+	const email = "guessing-test@multica.ai"
+	ctx := context.Background()
+	t.Cleanup(func() {
+		testPool.Exec(ctx, `DELETE FROM verification_code WHERE email = $1`, email)
+	})
+	send := func() int {
+		w := httptest.NewRecorder()
+		var buf bytes.Buffer
+		json.NewEncoder(&buf).Encode(map[string]string{"email": email})
+		req := httptest.NewRequest("POST", "/auth/send-code", &buf)
+		req.Header.Set("Content-Type", "application/json")
+		testHandler.SendCode(w, req)
+		return w.Code
+	}
+	// Codes from earlier in the day, each guessed wrong 5 times, as their minute-by-minute requests would leave them.
+	for i := 0; i < MaxDailyVerificationFailures/5-1; i++ {
+		if _, err := testPool.Exec(ctx, `INSERT INTO verification_code (email, code, expires_at, attempts, created_at)
+			VALUES ($1, '000000', now() - interval '1 hour', 5, now() - interval '2 hours')`, email); err != nil {
+			t.Fatalf("seed code: %v", err)
+		}
+	}
+	if code := send(); code != http.StatusOK {
+		t.Fatalf("SendCode below the limit: expected 200, got %d", code)
+	}
+	for i := 0; i < 5; i++ {
+		w := httptest.NewRecorder()
+		var buf bytes.Buffer
+		json.NewEncoder(&buf).Encode(map[string]string{"email": email, "code": "abcdef"})
+		req := httptest.NewRequest("POST", "/auth/verify-code", &buf)
+		req.Header.Set("Content-Type", "application/json")
+		testHandler.VerifyCode(w, req)
+	}
+	// A minute later the email would get a new code, but it has had its day's wrong guesses.
+	testPool.Exec(ctx, `UPDATE verification_code SET created_at = created_at - interval '2 minutes' WHERE email = $1`, email)
+	if code := send(); code != http.StatusTooManyRequests {
+		t.Fatalf("SendCode past the limit: expected 429, got %d", code)
+	}
+	// Failures older than a day don't count.
+	testPool.Exec(ctx, `UPDATE verification_code SET created_at = created_at - interval '25 hours' WHERE email = $1`, email)
+	if code := send(); code != http.StatusOK {
+		t.Fatalf("SendCode a day later: expected 200, got %d", code)
+	}
+}
+
 func TestVerifyCode(t *testing.T) {
 	const email = "verify-test@multica.ai"
 	ctx := context.Background()
