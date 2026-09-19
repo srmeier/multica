@@ -797,6 +797,12 @@ func (h *Handler) loadAttachmentForDownload(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusNotFound, "attachment not found")
 		return db.Attachment{}, false
 	}
+	// Farmhouse: a task token is bound to one workspace, and its user's
+	// membership elsewhere mustn't widen that (MUL-2600's binding).
+	if r.Header.Get("X-Actor-Source") == "task_token" && r.Header.Get("X-Workspace-ID") != workspaceID {
+		writeError(w, http.StatusNotFound, "attachment not found")
+		return db.Attachment{}, false
+	}
 	if h.MembershipCache.Get(r.Context(), userID, workspaceID) {
 		return att, true
 	}

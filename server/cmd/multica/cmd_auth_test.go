@@ -506,7 +506,7 @@ func TestValidateLoginTokenPrefix(t *testing.T) {
 		{name: "mcn_ Cloud Node PAT", token: "mcn_abc123", wantErr: false},
 		{name: "empty token", token: "", wantErr: true},
 		{name: "no prefix", token: "abc123", wantErr: true},
-		{name: "wrong prefix mdt_", token: "mdt_abc123", wantErr: true},
+		{name: "mdt_ daemon token (Farmhouse)", token: "mdt_abc123", wantErr: false},
 		{name: "wrong prefix mat_", token: "mat_abc123", wantErr: true},
 		{name: "case-sensitive: MUL_ rejected", token: "MUL_abc123", wantErr: true},
 		{name: "leading whitespace not allowed (callers TrimSpace first)", token: " mul_abc", wantErr: true},
@@ -532,7 +532,7 @@ func TestValidateLoginTokenPrefix(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for unknown prefix")
 	}
-	for _, p := range []string{"mul_", "mcn_"} {
+	for _, p := range []string{"mul_", "mcn_", "mdt_"} {
 		if !strings.Contains(err.Error(), p) {
 			t.Errorf("error %q does not mention prefix %q", err.Error(), p)
 		}

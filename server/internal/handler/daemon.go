@@ -98,6 +98,14 @@ func (h *Handler) requireDaemonRuntimeAccess(w http.ResponseWriter, r *http.Requ
 	if !h.requireDaemonWorkspaceAccess(w, r, uuidToString(rt.WorkspaceID)) {
 		return db.AgentRuntime{}, false
 	}
+	// Farmhouse: a daemon token minted through the API is bound to one daemon, as the batch claim
+	// and the daemon socket already enforce, so it reaches only that daemon's runtimes. Otherwise one
+	// runtime pod could claim, list or report for another pod's runtime in the same workspace.
+	if daemonID := middleware.DaemonIDFromContext(r.Context()); daemonID != "" && middleware.DaemonTokenCreatorFromContext(r.Context()) != "" &&
+		rt.DaemonID.Valid && rt.DaemonID.String != daemonID {
+		writeError(w, http.StatusNotFound, "runtime not found")
+		return db.AgentRuntime{}, false
+	}
 	return rt, true
 }
 
@@ -401,6 +409,13 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "workspace_id is required")
 		return
 	}
+	// Farmhouse: a daemon token minted through the API registers only as its own daemon, so it can't
+	// take over another daemon's runtime rows in its workspace.
+	if ctxDaemonID := middleware.DaemonIDFromContext(r.Context()); ctxDaemonID != "" &&
+		middleware.DaemonTokenCreatorFromContext(r.Context()) != "" && ctxDaemonID != req.DaemonID {
+		writeError(w, http.StatusForbidden, "daemon_id does not match token")
+		return
+	}
 	if len(req.Runtimes) == 0 && len(req.FailedProfiles) == 0 {
 		writeError(w, http.StatusBadRequest, "at least one runtime or failed profile is required")
 		return
@@ -421,7 +436,17 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "workspace not found")
 			return
 		}
-		// ownerID stays zero — COALESCE keeps the existing owner on upsert.
+		// Farmhouse: a token minted through the API makes its minter the runtimes' owner, while they
+		// are still a member, so the claim handler can mint task tokens. Other tokens leave ownerID
+		// zero, and COALESCE keeps the existing owner on upsert.
+		if creator := middleware.DaemonTokenCreatorFromContext(r.Context()); creator != "" {
+			member, err := h.getWorkspaceMember(r.Context(), creator, req.WorkspaceID)
+			if err != nil {
+				writeError(w, http.StatusForbidden, "the daemon token's creator is not a member of this workspace")
+				return
+			}
+			ownerID = member.UserID
+		}
 	} else {
 		member, ok := h.requireWorkspaceMember(w, r, req.WorkspaceID, "workspace not found")
 		if !ok {

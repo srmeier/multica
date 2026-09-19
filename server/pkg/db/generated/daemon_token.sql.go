@@ -14,7 +14,7 @@ import (
 const createDaemonToken = `-- name: CreateDaemonToken :one
 INSERT INTO daemon_token (token_hash, workspace_id, daemon_id, expires_at)
 VALUES ($1, $2, $3, $4)
-RETURNING id, token_hash, workspace_id, daemon_id, expires_at, created_at
+RETURNING id, token_hash, workspace_id, daemon_id, expires_at, created_at, created_by
 `
 
 type CreateDaemonTokenParams struct {
@@ -39,7 +39,69 @@ func (q *Queries) CreateDaemonToken(ctx context.Context, arg CreateDaemonTokenPa
 		&i.DaemonID,
 		&i.ExpiresAt,
 		&i.CreatedAt,
+		&i.CreatedBy,
 	)
+	return i, err
+}
+
+const createDaemonTokenByUser = `-- name: CreateDaemonTokenByUser :one
+INSERT INTO daemon_token (token_hash, workspace_id, daemon_id, expires_at, created_by)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, token_hash, workspace_id, daemon_id, expires_at, created_at, created_by
+`
+
+type CreateDaemonTokenByUserParams struct {
+	TokenHash   string             `json:"token_hash"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	DaemonID    string             `json:"daemon_id"`
+	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
+	CreatedBy   pgtype.UUID        `json:"created_by"`
+}
+
+// Farmhouse: a daemon token minted by a workspace admin, who owns the runtimes it registers.
+func (q *Queries) CreateDaemonTokenByUser(ctx context.Context, arg CreateDaemonTokenByUserParams) (DaemonToken, error) {
+	row := q.db.QueryRow(ctx, createDaemonTokenByUser,
+		arg.TokenHash,
+		arg.WorkspaceID,
+		arg.DaemonID,
+		arg.ExpiresAt,
+		arg.CreatedBy,
+	)
+	var i DaemonToken
+	err := row.Scan(
+		&i.ID,
+		&i.TokenHash,
+		&i.WorkspaceID,
+		&i.DaemonID,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+		&i.CreatedBy,
+	)
+	return i, err
+}
+
+const deleteDaemonTokenByID = `-- name: DeleteDaemonTokenByID :one
+DELETE FROM daemon_token
+WHERE id = $1 AND workspace_id = $2
+RETURNING token_hash, daemon_id
+`
+
+type DeleteDaemonTokenByIDParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+type DeleteDaemonTokenByIDRow struct {
+	TokenHash string `json:"token_hash"`
+	DaemonID  string `json:"daemon_id"`
+}
+
+// Farmhouse: revoke one daemon token. Returns token_hash so the caller can invalidate
+// auth.DaemonTokenCache at once, and daemon_id so it can close the daemon's connections.
+func (q *Queries) DeleteDaemonTokenByID(ctx context.Context, arg DeleteDaemonTokenByIDParams) (DeleteDaemonTokenByIDRow, error) {
+	row := q.db.QueryRow(ctx, deleteDaemonTokenByID, arg.ID, arg.WorkspaceID)
+	var i DeleteDaemonTokenByIDRow
+	err := row.Scan(&i.TokenHash, &i.DaemonID)
 	return i, err
 }
 
@@ -93,7 +155,7 @@ func (q *Queries) DeleteExpiredDaemonTokens(ctx context.Context) error {
 }
 
 const getDaemonTokenByHash = `-- name: GetDaemonTokenByHash :one
-SELECT id, token_hash, workspace_id, daemon_id, expires_at, created_at FROM daemon_token
+SELECT id, token_hash, workspace_id, daemon_id, expires_at, created_at, created_by FROM daemon_token
 WHERE token_hash = $1 AND expires_at > now()
 `
 
@@ -107,6 +169,50 @@ func (q *Queries) GetDaemonTokenByHash(ctx context.Context, tokenHash string) (D
 		&i.DaemonID,
 		&i.ExpiresAt,
 		&i.CreatedAt,
+		&i.CreatedBy,
 	)
 	return i, err
+}
+
+const listDaemonTokensByWorkspace = `-- name: ListDaemonTokensByWorkspace :many
+SELECT id, workspace_id, daemon_id, expires_at, created_at, created_by FROM daemon_token
+WHERE workspace_id = $1 AND created_by IS NOT NULL
+ORDER BY created_at
+`
+
+type ListDaemonTokensByWorkspaceRow struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	DaemonID    string             `json:"daemon_id"`
+	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	CreatedBy   pgtype.UUID        `json:"created_by"`
+}
+
+// Farmhouse: the API-minted daemon tokens of a workspace, without their hashes.
+func (q *Queries) ListDaemonTokensByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]ListDaemonTokensByWorkspaceRow, error) {
+	rows, err := q.db.Query(ctx, listDaemonTokensByWorkspace, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListDaemonTokensByWorkspaceRow{}
+	for rows.Next() {
+		var i ListDaemonTokensByWorkspaceRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.DaemonID,
+			&i.ExpiresAt,
+			&i.CreatedAt,
+			&i.CreatedBy,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

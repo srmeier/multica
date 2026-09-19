@@ -168,9 +168,18 @@ func (h *Handler) ListWorkspaces(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := make([]WorkspaceResponse, len(workspaces))
-	for i, ws := range workspaces {
-		resp[i] = h.workspaceToResponse(ws)
+	// Farmhouse: a task token sees only the workspace it's bound to, so an
+	// agent doesn't learn the names of other workspaces its user belongs to.
+	bound := ""
+	if r.Header.Get("X-Actor-Source") == "task_token" {
+		bound = r.Header.Get("X-Workspace-ID")
+	}
+	resp := make([]WorkspaceResponse, 0, len(workspaces))
+	for _, ws := range workspaces {
+		if bound != "" && uuidToString(ws.ID) != bound {
+			continue
+		}
+		resp = append(resp, h.workspaceToResponse(ws))
 	}
 
 	writeJSON(w, http.StatusOK, resp)

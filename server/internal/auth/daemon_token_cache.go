@@ -22,6 +22,9 @@ const daemonTokenCachePrefix = "mul:auth:daemon:"
 type DaemonTokenIdentity struct {
 	WorkspaceID string `json:"w"`
 	DaemonID    string `json:"d"`
+	// CreatedBy is the user who minted the token through the API (Farmhouse), empty for tokens
+	// minted for remote MCP. That user owns the runtimes the token registers.
+	CreatedBy string `json:"u,omitempty"`
 }
 
 // DaemonTokenCache caches resolved daemon-token (mdt_) lookups in Redis.

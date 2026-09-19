@@ -3498,6 +3498,10 @@ func (d *Daemon) tokenRenewalLoop(ctx context.Context) {
 // handle them. Failures are debug-level except for 401, which gets a
 // user-actionable warning.
 func (d *Daemon) tryRenewToken(ctx context.Context) {
+	// Farmhouse: a daemon token (mdt_) isn't a PAT and has nothing to renew; its minter replaces it.
+	if strings.HasPrefix(d.client.Token(), "mdt_") {
+		return
+	}
 	reqCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 

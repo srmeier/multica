@@ -1446,6 +1446,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// /v1 prevents the Public API from accepting session cookies.
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.Auth(queries, patCache, cloudPATVerifier))
+		// Farmhouse: the bridge derives the workspace from the installation and
+		// checks the user's membership, not a task token's binding.
+		r.Use(handler.RequireHumanActor)
 		r.Route(pluginBridgePrefix, func(r chi.Router) {
 			registerPluginActionRoutes(r, h)
 			// ui / manual only. `event` is dispatched by the host off the event
@@ -1474,18 +1477,22 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// create workspaces, accept invitations, or bind the account to an outside
 		// chat or integration identity. See handler/actor_guards.go.
 		r.With(handler.RequireHumanActor).Patch("/api/me", h.UpdateMe)
-		r.Patch("/api/me/onboarding", h.PatchOnboarding)
-		r.Post("/api/me/onboarding/complete", h.CompleteOnboarding)
-		r.Post("/api/me/onboarding/cloud-waitlist", h.JoinCloudWaitlist)
+		r.With(handler.RequireHumanActor).Patch("/api/me/onboarding", h.PatchOnboarding)
+		r.With(handler.RequireHumanActor).Post("/api/me/onboarding/complete", h.CompleteOnboarding)
+		r.With(handler.RequireHumanActor).Post("/api/me/onboarding/cloud-waitlist", h.JoinCloudWaitlist)
 		// DEPRECATED — shim routes for desktop < v3 during the rollout
 		// window. v3 frontend creates the Helper agent + starter issue
 		// via generic CreateAgent / CreateIssue and only calls /complete
 		// here. Remove once X-Client-Version telemetry confirms zero
 		// pre-v3 desktops are still calling these. Handlers live in
 		// server/internal/handler/onboarding_shim.go.
-		r.Post("/api/me/onboarding/runtime-bootstrap", h.BootstrapOnboardingRuntime)
-		r.Post("/api/me/onboarding/no-runtime-bootstrap", h.BootstrapOnboardingNoRuntime)
-		r.Post("/api/cli-token", h.IssueCliToken)
+		// Farmhouse: onboarding takes its workspace from the body, so a task token
+		// bound to one workspace could create agents and issues in another.
+		r.With(handler.RequireHumanActor).Post("/api/me/onboarding/runtime-bootstrap", h.BootstrapOnboardingRuntime)
+		r.With(handler.RequireHumanActor).Post("/api/me/onboarding/no-runtime-bootstrap", h.BootstrapOnboardingNoRuntime)
+		// Farmhouse: a CLI JWT is a full session for the user in every workspace;
+		// minting one from a task token would undo the token's workspace binding.
+		r.With(handler.RequireHumanActor).Post("/api/cli-token", h.IssueCliToken)
 		r.Post("/api/upload-file", h.UploadFile)
 		r.Post("/api/feedback", h.CreateFeedback)
 		r.With(handler.RequireHumanActor).Post("/api/client-usage", h.UpsertClientUsage)
@@ -1566,6 +1573,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/mcp-servers", h.CreateWorkspaceMcpServer)
 					r.Put("/mcp-servers/{serverId}", h.UpdateWorkspaceMcpServer)
 					r.Delete("/mcp-servers/{serverId}", h.DeleteWorkspaceMcpServer)
+					// Farmhouse: daemon tokens for runtime pods, minted and revoked by a
+					// human owner or admin (see handler/daemon_token_farmhouse.go).
+					r.Get("/daemon-tokens", h.ListDaemonTokens)
+					r.With(handler.RequireHumanActor).Post("/daemon-tokens", h.CreateDaemonToken)
+					r.With(handler.RequireHumanActor).Delete("/daemon-tokens/{tokenId}", h.RevokeDaemonToken)
 					r.Post("/share-links", h.CreateShareLink)
 					r.Delete("/share-links/{linkId}", h.RevokeShareLink)
 					r.Get("/share-links", h.ListShareLinks)
@@ -1727,8 +1739,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		})
 
 		// User-scoped invitation routes (no workspace context required)
-		r.Get("/api/invitations", h.ListMyInvitations)
-		r.Get("/api/invitations/{id}", h.GetMyInvitation)
+		r.With(handler.RequireHumanActor).Get("/api/invitations", h.ListMyInvitations)
+		r.With(handler.RequireHumanActor).Get("/api/invitations/{id}", h.GetMyInvitation)
 		r.With(handler.RequireHumanActor).Post("/api/invitations/{id}/accept", h.AcceptInvitation)
 		r.With(handler.RequireHumanActor).Post("/api/invitations/{id}/decline", h.DeclineInvitation)
 		r.With(handler.RequireHumanActor).Post("/api/share-links/join", h.JoinByShareLink)

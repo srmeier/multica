@@ -601,6 +601,29 @@ func (h *Hub) UserConnectionCount(userID string) int {
 	return len(h.byUser[userID])
 }
 
+// DisconnectDaemon closes this replica's connections authenticated as daemonID in workspaceID
+// (Farmhouse). A connection keeps the identity it was authenticated with, and a claim over it
+// (tasks.claim RPC) doesn't recheck the token, so revoking a daemon token must also close its
+// connections. Returns how many were closed.
+func (h *Hub) DisconnectDaemon(workspaceID, daemonID string) int {
+	if workspaceID == "" || daemonID == "" {
+		return 0
+	}
+	h.mu.RLock()
+	var matched []*client
+	for c := range h.byWorkspace[workspaceID] {
+		if c.identity.DaemonID == daemonID {
+			matched = append(matched, c)
+		}
+	}
+	h.mu.RUnlock()
+	for _, c := range matched {
+		h.unregister(c)
+		c.conn.Close()
+	}
+	return len(matched)
+}
+
 func (h *Hub) register(c *client) {
 	h.mu.Lock()
 	h.clients[c] = true
