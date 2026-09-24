@@ -158,6 +158,13 @@ func (b *bobBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 
 			switch event.Type {
 			case "message":
+				if event.Role == "assistant" && event.Content != "" && event.IsReasoning {
+					// A model's thinking, which Bob streams as assistant messages marked isReasoning (a
+					// backend such as vLLM that returns reasoning apart from content, Farmhouse V35). It is
+					// shown as thinking and never becomes part of the output.
+					trySend(msgCh, Message{Type: MessageThinking, Content: event.Content})
+					break
+				}
 				if event.Role == "assistant" && event.Content != "" {
 					lastAssistantText.WriteString(event.Content)
 					trySend(msgCh, Message{Type: MessageText, Content: event.Content})
@@ -310,15 +317,17 @@ var bobBlockedArgs = map[string]blockedArgMode{
 //	{"type":"tool_result","timestamp":"…", "tool_id":"…", "status":"success"|"error", "output":"…"}
 //	{"type":"result",     "timestamp":"…", "status":"success"|"error", "stats":{…}}
 type bobStreamEvent struct {
-	Type       string          `json:"type"`
-	Role       string          `json:"role,omitempty"`
-	Content    string          `json:"content,omitempty"`
-	ToolName   string          `json:"tool_name,omitempty"`
-	ToolID     string          `json:"tool_id,omitempty"`
-	Parameters json.RawMessage `json:"parameters,omitempty"`
-	Output     string          `json:"output,omitempty"`
-	Status     string          `json:"status,omitempty"`
-	Stats      *bobResultStats `json:"stats,omitempty"`
+	Type    string `json:"type"`
+	Role    string `json:"role,omitempty"`
+	Content string `json:"content,omitempty"`
+	// IsReasoning marks an assistant message that is the model's thinking, not its answer.
+	IsReasoning bool            `json:"isReasoning,omitempty"`
+	ToolName    string          `json:"tool_name,omitempty"`
+	ToolID      string          `json:"tool_id,omitempty"`
+	Parameters  json.RawMessage `json:"parameters,omitempty"`
+	Output      string          `json:"output,omitempty"`
+	Status      string          `json:"status,omitempty"`
+	Stats       *bobResultStats `json:"stats,omitempty"`
 	// "error" events carry their text in one of these (content is also used).
 	Message string `json:"message,omitempty"`
 	Error   string `json:"error,omitempty"`
