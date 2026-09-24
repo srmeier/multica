@@ -11,6 +11,7 @@ func TestBobCostLimitText(t *testing.T) {
 		{"content", bobStreamEvent{Type: "error", Content: "Maximum cost limit reached ($0.0146 of $0.01)"}, "Maximum cost limit reached ($0.0146 of $0.01)"},
 		{"message field", bobStreamEvent{Type: "error", Message: "maximum cost limit reached"}, "maximum cost limit reached"},
 		{"error field", bobStreamEvent{Type: "error", Error: "Maximum cost limit reached"}, "Maximum cost limit reached"},
+		{"2.0.4 message", bobStreamEvent{Type: "error", Message: "The task reached the cost limit of 0.0010 (spent: 0.021)."}, "The task reached the cost limit of 0.0010 (spent: 0.021)."},
 		{"other error", bobStreamEvent{Type: "error", Content: "rate limited"}, ""},
 		{"not an error event", bobStreamEvent{Type: "message", Role: "assistant", Content: "Maximum cost limit reached"}, ""},
 	}

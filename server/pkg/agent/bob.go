@@ -331,15 +331,23 @@ const (
 	BobCostLimitReason = "bob_cost_limit"
 )
 
+// bobCostLimitPhrases are how Bob words its --max-cost stop: 2.0.0 says
+// "Maximum cost limit reached …", 2.0.4 "The task reached the cost limit of
+// 0.0010 (spent: 0.021)."
+var bobCostLimitPhrases = []string{"maximum cost limit", "reached the cost limit"}
+
 // bobCostLimitText returns the text of an "error" event that reports the
-// --max-cost cap ("Maximum cost limit reached …"), or "".
+// --max-cost cap, or "".
 func bobCostLimitText(event bobStreamEvent) string {
 	if event.Type != "error" {
 		return ""
 	}
 	for _, text := range []string{event.Content, event.Message, event.Error} {
-		if strings.Contains(strings.ToLower(text), "maximum cost limit") {
-			return text
+		lower := strings.ToLower(text)
+		for _, phrase := range bobCostLimitPhrases {
+			if strings.Contains(lower, phrase) {
+				return text
+			}
 		}
 	}
 	return ""
